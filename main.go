@@ -1,6 +1,8 @@
 package main
 
 import (
+	"log"
+
 	"github.com/RushabhMehta2005/crud-jwt/config"
 	"github.com/RushabhMehta2005/crud-jwt/controllers"
 	"github.com/RushabhMehta2005/crud-jwt/database"
@@ -8,12 +10,21 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func init() {
-	config.LoadEnvVars()
-	database.ConnectToDB()
-}
 
 func main() {
+
+	err := config.LoadEnvVars()
+
+	if err != nil {
+		log.Fatalf("Failed to load environment variables: %v", err)
+	}
+
+	err = database.ConnectToDB()
+
+	if err != nil {
+		log.Fatalf("Failed to connect to database: %v", err)
+	}
+
 	router := gin.Default()
 
 	// Public routes
