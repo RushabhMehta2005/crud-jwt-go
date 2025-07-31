@@ -7,8 +7,8 @@ type Item struct {
 	CreatedAt time.Time
 	UpdatedAt time.Time
 
-	Name     string
-	Price    float32
-	Quantity int
-	UserID   uint
+	Name     string `gorm:"not null"`
+    Price    float32
+    Quantity int    `gorm:"not null"`
+    UserID   uint   `gorm:"not null;index"`
 }
