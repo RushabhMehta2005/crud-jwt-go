@@ -63,14 +63,14 @@ func main() {
     }
 
 	server := &http.Server{
-        Addr:         os.Getenv("PORT"),
+        Addr:         ":" + os.Getenv("PORT"),
         Handler:      router,
         ReadTimeout:  5 * time.Second,
         WriteTimeout: 10 * time.Second,
         IdleTimeout:  120 * time.Second,
     }
 
-    log.Println("Starting server on port 8080")
+    log.Println("Starting server on port " + os.Getenv("PORT"))
     if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
         log.Fatalf("listen: %s\n", err)
     }
