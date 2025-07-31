@@ -2,6 +2,9 @@ package main
 
 import (
 	"log"
+	"net/http"
+	"os"
+	"time"
 
 	"github.com/RushabhMehta2005/crud-jwt/config"
 	"github.com/RushabhMehta2005/crud-jwt/controllers"
@@ -13,6 +16,7 @@ import (
 
 func main() {
 
+	// Application setup
 	err := config.LoadEnvVars()
 
 	if err != nil {
@@ -25,25 +29,49 @@ func main() {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
 
+	// Application Routes
 	router := gin.Default()
 
-	// Public routes
-	router.POST("/register", controllers.Register)
-	router.POST("/login", controllers.Login)
+	// Public auth routes
+    authRoutes := router.Group("/auth")
+    {
+        authRoutes.POST("/register", controllers.Register)
+        authRoutes.POST("/login", controllers.Login)
+        authRoutes.POST("/refresh", controllers.RefreshToken)
+    }
 
-	// Protected routes - Authentication
-	router.GET("/validate", middleware.RequireAuth, controllers.Validate)
-	router.PATCH("/user/password", middleware.RequireAuth, controllers.ChangePassword)
-	router.POST("/logout", middleware.RequireAuth, controllers.Logout)
-	router.POST("/user/refresh", middleware.RequireAuth, controllers.RefreshToken)
-	router.GET("/user/profile", middleware.RequireAuth, controllers.GetProfile)
+    // Protected API routes
+    api := router.Group("/api")
+    api.Use(middleware.RequireAuth)
+    {
+        // User routes
+        userRoutes := api.Group("/user")
+        {
+            userRoutes.GET("/profile", controllers.GetProfile)
+            userRoutes.PATCH("/password", controllers.ChangePassword)
+        }
 
-	// Protected routes - Items
-	router.GET("/item", middleware.RequireAuth, controllers.ListItems)
-	router.POST("/item", middleware.RequireAuth, controllers.CreateItem)
-	router.GET("/item/:id", middleware.RequireAuth, controllers.GetItem)
-	router.PATCH("/item/:id", middleware.RequireAuth, controllers.UpdateItem)
-	router.DELETE("/item/:id", middleware.RequireAuth, controllers.DeleteItem)
+        // Item routes
+        itemRoutes := api.Group("/items")
+        {
+            itemRoutes.GET("", controllers.ListItems)
+            itemRoutes.POST("", controllers.CreateItem)
+            itemRoutes.GET("/:id", controllers.GetItem)
+            itemRoutes.PATCH("/:id", controllers.UpdateItem)
+            itemRoutes.DELETE("/:id", controllers.DeleteItem)
+        }
+    }
 
-	router.Run()
+	server := &http.Server{
+        Addr:         os.Getenv("PORT"),
+        Handler:      router,
+        ReadTimeout:  5 * time.Second,
+        WriteTimeout: 10 * time.Second,
+        IdleTimeout:  120 * time.Second,
+    }
+
+    log.Println("Starting server on port 8080")
+    if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+        log.Fatalf("listen: %s\n", err)
+    }
 }
