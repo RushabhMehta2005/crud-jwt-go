@@ -48,7 +48,7 @@ func main() {
 			userRoutes.PATCH("/password", handler.ChangePassword)
 		}
 
-		// Item routes (already protected by the group's middleware)
+		// Item routes
 		itemRoutes := api.Group("/items")
 		{
 			itemRoutes.POST("", handler.CreateItem)
@@ -59,7 +59,6 @@ func main() {
 		}
 	}
 	
-	// Get port from environment, with a fallback
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
