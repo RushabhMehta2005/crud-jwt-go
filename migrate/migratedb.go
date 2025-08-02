@@ -9,17 +9,21 @@ import (
 )
 
 func main() {
+	// Load environment variables
 	if err := config.LoadEnvVars(); err != nil {
 		log.Fatalf("Error loading environment variables: %v", err)
 	}
-	if err := database.ConnectToDB(); err != nil {
+
+	// Connect to DB and get the local DB instance
+	db, err := database.ConnectToDB()
+	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
 
 	log.Println("Running database migrations...")
 
-    // Consolidate models
-	err := database.DB.AutoMigrate(
+	// Use the returned db instance to run AutoMigrate
+	err = db.AutoMigrate(
 		&models.User{},
 		&models.Item{},
 	)

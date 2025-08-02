@@ -9,69 +9,73 @@ import (
 	"github.com/RushabhMehta2005/crud-jwt/config"
 	"github.com/RushabhMehta2005/crud-jwt/controllers"
 	"github.com/RushabhMehta2005/crud-jwt/database"
-	"github.com/RushabhMehta2005/crud-jwt/middleware"
 	"github.com/gin-gonic/gin"
 )
 
-
 func main() {
-
-	// Application setup
-	err := config.LoadEnvVars()
-
-	if err != nil {
+	// Load environment variables from .env file
+	if err := config.LoadEnvVars(); err != nil {
 		log.Fatalf("Failed to load environment variables: %v", err)
 	}
 
-	err = database.ConnectToDB()
-
+	// Connect to the database and get the DB instance
+	db, err := database.ConnectToDB()
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
 
-	// Application Routes
+	// Create the single, central handler with its dependencies
+	handler := controllers.NewHandler(db)
+
+	// Setup router
 	router := gin.Default()
 
-	// Public auth routes
-    authRoutes := router.Group("/auth")
-    {
-        authRoutes.POST("/register", controllers.Register)
-        authRoutes.POST("/login", controllers.Login)
-        authRoutes.POST("/refresh", controllers.RefreshToken)
-    }
+	// Public authentication routes
+	authRoutes := router.Group("/auth")
+	{
+		authRoutes.POST("/register", handler.Register)
+		authRoutes.POST("/login", handler.Login)
+		authRoutes.POST("/logout", handler.Logout)
+	}
 
-    // Protected API routes
-    api := router.Group("/api")
-    api.Use(middleware.RequireAuth)
-    {
-        // User routes
-        userRoutes := api.Group("/user")
-        {
-            userRoutes.GET("/profile", controllers.GetProfile)
-            userRoutes.PATCH("/password", controllers.ChangePassword)
-        }
+	// Protected API routes
+	api := router.Group("/api", handler.RequireAuth) 
+	{
+		// User routes
+		userRoutes := api.Group("/user")
+		{
+			userRoutes.GET("/profile", handler.GetProfile)
+			userRoutes.PATCH("/password", handler.ChangePassword)
+		}
 
-        // Item routes
-        itemRoutes := api.Group("/items")
-        {
-            itemRoutes.GET("", controllers.ListItems)
-            itemRoutes.POST("", controllers.CreateItem)
-            itemRoutes.GET("/:id", controllers.GetItem)
-            itemRoutes.PATCH("/:id", controllers.UpdateItem)
-            itemRoutes.DELETE("/:id", controllers.DeleteItem)
-        }
-    }
+		// Item routes (already protected by the group's middleware)
+		itemRoutes := api.Group("/items")
+		{
+			itemRoutes.POST("", handler.CreateItem)
+			itemRoutes.GET("", handler.ListItems)
+			itemRoutes.GET("/:id", handler.GetItem)
+			itemRoutes.PATCH("/:id", handler.UpdateItem)
+			itemRoutes.DELETE("/:id", handler.DeleteItem)
+		}
+	}
+	
+	// Get port from environment, with a fallback
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
 
+	// Configure and start the server
 	server := &http.Server{
-        Addr:         ":" + os.Getenv("PORT"),
-        Handler:      router,
-        ReadTimeout:  5 * time.Second,
-        WriteTimeout: 10 * time.Second,
-        IdleTimeout:  120 * time.Second,
-    }
+		Addr:         ":" + port,
+		Handler:      router,
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		IdleTimeout:  120 * time.Second,
+	}
 
-    log.Println("Starting server on port " + os.Getenv("PORT"))
-    if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-        log.Fatalf("listen: %s\n", err)
-    }
+	log.Printf("Starting server on port %s", port)
+	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Fatalf("listen: %s\n", err)
+	}
 }
