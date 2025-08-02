@@ -2,29 +2,37 @@ package controllers
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
+	"runtime"
 	"strconv"
 	"time"
-	"fmt"
 
 	"github.com/RushabhMehta2005/crud-jwt/models"
+	"github.com/RushabhMehta2005/crud-jwt/services"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/patrickmn/go-cache"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const (
-	authCookieName = "Authorization"
-	jwtExpiration  = 6 * time.Hour
-	bcryptCost     = 12
+	authCookieName  = "Authorization"
+	jwtExpiration   = 6 * time.Hour
+	bcryptCost      = 12
+	cacheDefaultExp = 5 * time.Minute
+	cacheCleanupInt = 10 * time.Minute
 )
 
 // Handler holds the application's dependencies, making them explicit.
 type Handler struct {
 	DB        *gorm.DB
 	JWTSecret string
+	Hasher    *services.Hasher
+	UserCache *cache.Cache
 }
 
 // NewHandler creates a new handler with its dependencies.
@@ -33,33 +41,38 @@ func NewHandler(db *gorm.DB) *Handler {
 	if jwtSecret == "" {
 		panic("SECRET_KEY environment variable not set")
 	}
+
+	// Create the hasher service with a worker for each available CPU core.
+	hasher := services.NewHasher(runtime.NumCPU(), bcryptCost)
+
+	// Create the in-memory cache.
+	userCache := cache.New(cacheDefaultExp, cacheCleanupInt)
+
 	return &Handler{
 		DB:        db,
 		JWTSecret: jwtSecret,
+		Hasher:    hasher,
+		UserCache: userCache,
 	}
 }
 
 // RequireAuth is a middleware to protect routes that require authentication.
+// now optimized with a caching layer.
 func (h *Handler) RequireAuth(c *gin.Context) {
-	// 1. Get the token from the cookie
 	tokenString, err := c.Cookie(authCookieName)
 	if err != nil {
 		h.jsonError(c, http.StatusUnauthorized, "Authorization token required")
 		return
 	}
 
-	// 2. Parse and validate the token
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-		// Ensure the signing method is what we expect
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
-		// Return the secret key for validation
 		return []byte(h.JWTSecret), nil
 	})
 
 	if err != nil {
-		// This handles expired tokens, invalid signatures, etc.
 		h.jsonError(c, http.StatusUnauthorized, "Invalid or expired token")
 		return
 	}
@@ -70,7 +83,6 @@ func (h *Handler) RequireAuth(c *gin.Context) {
 		return
 	}
 
-	// 3. Get user ID from claims (sub)
 	userIDFloat, ok := claims["sub"].(float64)
 	if !ok {
 		h.jsonError(c, http.StatusUnauthorized, "Invalid user ID in token")
@@ -78,27 +90,39 @@ func (h *Handler) RequireAuth(c *gin.Context) {
 	}
 	userID := uint(userIDFloat)
 
-	// 4. Fetch the user from the database
+	// --- Caching Logic Starts Here ---
+	cacheKey := fmt.Sprintf("user:%d", userID)
+
+	// Check cache first
+	if cachedUser, found := h.UserCache.Get(cacheKey); found {
+		if user, ok := cachedUser.(models.User); ok {
+			c.Set("user", user)
+			c.Next()
+			return
+		}
+	}
+
+	// Cache miss: Fetch from DB
 	var user models.User
 	if err := h.DB.First(&user, userID).Error; err != nil {
-		// This handles cases where the user was deleted after the token was issued.
 		h.jsonError(c, http.StatusUnauthorized, "User not found")
 		return
 	}
 
-	// 5. Attach the user object to the context
-	c.Set("user", user)
+	// Populate cache
+	h.UserCache.Set(cacheKey, user, cache.DefaultExpiration)
 
-	// 6. Continue to the next handler
+	c.Set("user", user)
 	c.Next()
 }
 
 // ## User Handlers
 
+// Register now offloads hashing to the worker pool.
 func (h *Handler) Register(c *gin.Context) {
 	var body struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
+		Email    string `json:"email" binding:"required,email"`
+		Password string `json:"password" binding:"required,min=8"`
 	}
 
 	if err := c.ShouldBindJSON(&body); err != nil {
@@ -106,13 +130,14 @@ func (h *Handler) Register(c *gin.Context) {
 		return
 	}
 
-	hash, err := bcrypt.GenerateFromPassword([]byte(body.Password), bcryptCost)
+	// Offload the slow hashing operation.
+	hash, err := h.Hasher.GenerateHash(body.Password)
 	if err != nil {
 		h.jsonError(c, http.StatusInternalServerError, "Failed to hash password")
 		return
 	}
 
-	user := models.User{Email: body.Email, Password: string(hash)}
+	user := models.User{Email: body.Email, Password: hash}
 	if result := h.DB.Create(&user); result.Error != nil {
 		h.jsonError(c, http.StatusBadRequest, "Failed to create user, email may be taken")
 		return
@@ -175,10 +200,11 @@ func (h *Handler) GetProfile(c *gin.Context) {
 	})
 }
 
+// ChangePassword offloads hashing and invalidates the cache.
 func (h *Handler) ChangePassword(c *gin.Context) {
 	var body struct {
-		CurrentPassword string `json:"current_password"`
-		NewPassword     string `json:"new_password"`
+		CurrentPassword string `json:"current_password" binding:"required"`
+		NewPassword     string `json:"new_password" binding:"required,min=8"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		h.jsonError(c, http.StatusBadRequest, "Invalid request body: "+err.Error())
@@ -196,17 +222,22 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 		return
 	}
 
-	newHash, err := bcrypt.GenerateFromPassword([]byte(body.NewPassword), bcryptCost)
+	// Offload the new password hashing.
+	newHash, err := h.Hasher.GenerateHash(body.NewPassword)
 	if err != nil {
 		h.jsonError(c, http.StatusInternalServerError, "Failed to hash new password")
 		return
 	}
 
-	user.Password = string(newHash)
+	user.Password = newHash
 	if err := h.DB.Save(&user).Error; err != nil {
 		h.jsonError(c, http.StatusInternalServerError, "Failed to update password")
 		return
 	}
+	
+	// CRITICAL: Invalidate the cache for this user.
+	cacheKey := fmt.Sprintf("user:%d", user.ID)
+	h.UserCache.Delete(cacheKey)
 
 	c.JSON(http.StatusOK, gin.H{"message": "Password changed successfully"})
 }
@@ -312,7 +343,6 @@ func (h *Handler) UpdateItem(c *gin.Context) {
 		return
 	}
 
-	// Build a map of fields to update to handle partial updates (PATCH).
 	updates := make(map[string]interface{})
 	if body.Name != nil {
 		updates["name"] = *body.Name
@@ -328,8 +358,12 @@ func (h *Handler) UpdateItem(c *gin.Context) {
 		h.jsonError(c, http.StatusBadRequest, "No fields to update")
 		return
 	}
-
-	result := h.DB.Model(&models.Item{}).Where("id = ? AND user_id = ?", itemID, user.ID).Updates(updates)
+	
+	var updatedItem models.Item
+	result := h.DB.Model(&updatedItem).
+		Clauses(clause.Returning{}).
+		Where("id = ? AND user_id = ?", itemID, user.ID).
+		Updates(updates)
 
 	if result.Error != nil {
 		h.jsonError(c, http.StatusInternalServerError, "Failed to update item")
@@ -339,9 +373,6 @@ func (h *Handler) UpdateItem(c *gin.Context) {
 		h.jsonError(c, http.StatusNotFound, "Item not found or you don't have permission to update it")
 		return
 	}
-
-	var updatedItem models.Item
-	h.DB.First(&updatedItem, itemID)
 
 	c.JSON(http.StatusOK, gin.H{"item": updatedItem})
 }
