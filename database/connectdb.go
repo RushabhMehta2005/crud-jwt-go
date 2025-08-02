@@ -12,23 +12,10 @@ import (
 
 // ConnectToDB creates and returns a new database connection instance.
 func ConnectToDB() (*gorm.DB, error) {
-	// Build DSN from individual environment variables for security and flexibility.
-	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=disable",
-		os.Getenv("DB_HOST"),
-		os.Getenv("DB_USER"),
-		os.Getenv("DB_PASSWORD"),
-		os.Getenv("DB_NAME"),
-		os.Getenv("DB_PORT"),
-	)
-    
-    if os.Getenv("DB_HOST") == "" {
-        return nil, fmt.Errorf("database environment variables not fully set")
-    }
+	dsn := os.Getenv("DB_CREDENTIALS")
 
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
-		// Set logger to Silent to avoid logging every query in production.
-		// Use logger.Info for development.
-		Logger: logger.Default.LogMode(logger.Silent),
+		Logger: logger.Default.LogMode(logger.Info),
 	})
 
 	if err != nil {
