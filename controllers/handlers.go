@@ -184,6 +184,10 @@ func (h *Handler) Logout(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Logged out successfully"})
 }
 
+func (h *Handler) Check(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"message": "Health is healthy."})
+}
+
 func (h *Handler) GetProfile(c *gin.Context) {
 	user, err := h.getUserFromContext(c)
 	if err != nil {

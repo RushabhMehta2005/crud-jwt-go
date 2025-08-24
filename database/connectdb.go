@@ -12,7 +12,7 @@ import (
 
 // ConnectToDB creates and returns a new database connection instance.
 func ConnectToDB() (*gorm.DB, error) {
-	dsn := os.Getenv("DB_CREDENTIALS")
+	dsn := os.Getenv("DATABASE_URL")
 
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Info),

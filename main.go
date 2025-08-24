@@ -14,9 +14,7 @@ import (
 
 func main() {
 	// Load environment variables from .env file
-	if err := config.LoadEnvVars(); err != nil {
-		log.Fatalf("Failed to load environment variables: %v", err)
-	}
+	config.LoadEnvVars()
 
 	// Connect to the database and get the DB instance
 	db, err := database.ConnectToDB()
@@ -36,6 +34,7 @@ func main() {
 		authRoutes.POST("/register", handler.Register)
 		authRoutes.POST("/login", handler.Login)
 		authRoutes.POST("/logout", handler.Logout)
+		authRoutes.GET("/check", handler.Check)
 	}
 
 	// Protected API routes
@@ -59,6 +58,7 @@ func main() {
 		}
 	}
 	
+
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"

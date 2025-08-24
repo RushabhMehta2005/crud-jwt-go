@@ -45,3 +45,6 @@ coverage.*
 
 # GitHub CLI
 .gh/
+
+.dockerignore
+Dockerfile
